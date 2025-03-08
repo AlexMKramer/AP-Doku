@@ -1,5 +1,7 @@
 # AP-Doku
 A full-featured Sudoku game built with SwiftUI, featuring Archipelago Multi-World integration.  Now you can get hints for your games while BK'd from your phone!
+<p align="center"> <img src="https://github.com/user-attachments/assets/67a69f25-9ad3-46e8-9558-13681951c6ee" alt="AP Doku Home Screen" width="300"> </p>
+
 
 ## Features
 - AP Integration!
