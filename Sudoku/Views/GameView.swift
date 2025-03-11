@@ -164,6 +164,14 @@ struct GameView: View {
                         hintVM.clearAlert()
                     })
                 )
+            case .hintsDisabledOnServer:
+                return Alert(
+                    title: Text("Hints Disabled"),
+                    message: Text("The server has disabled hints. If you think this is a mistake, disconnect and reach out to the server administrator."),
+                    dismissButton: .default(Text("OK"), action: {
+                        hintVM.clearAlert()
+                    })
+                )
             }
         }
         .navigationBarBackButtonHidden(true)

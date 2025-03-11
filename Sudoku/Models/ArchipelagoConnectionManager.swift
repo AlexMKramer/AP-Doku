@@ -49,6 +49,8 @@ final class ArchipelagoConnectionManager: ObservableObject {
                 newClient.isOpen = true
                 print("New connection established.")
                 
+                
+                
                 // Attempt to send any cached hints now that we are connected.
                 HintCacheManager.shared.dispatchPendingHints()
             }

@@ -3,12 +3,41 @@ import UserNotifications
 
 extension HintGameWebSocketClient {
     // Define difficulty probabilities.
-    static let difficultyProbs: [String: [Int: Double]] = [
-        "Easy":   [1: 0.10, 2: 0.25, 0: 0.55, 4: 0.10],
-        "Medium": [1: 0.40, 2: 0.35, 0: 0.19, 4: 0.05],
-        "Killer": [1: 0.60, 2: 0.25, 0: 0.10, 4: 0.05],
-        "Hard":   [1: 0.80, 2: 0.15, 0: 0.05, 4: 0.0]
+    static var difficultyProbs: [String: [Int: Double]] = [
+        "Easy":   [1: 0.10, 0: 0.90, -1: 0.00],
+        "Medium": [1: 0.40, 0: 0.60, -1: 0.00],
+        "Killer": [1: 0.60, 0: 0.40, -1: 0.00],
+        "Hard":   [1: 0.80, 0: 0.20, -1: 0.00]
     ]
+
+    static func updateHintProbabilities(with newMapping: [String: [Int]]) {
+        for (difficulty, values) in newMapping {
+            // Ensure we have exactly three values.
+            guard values.count == 3 else { continue }
+            
+            let progressionProb = Double(values[0]) / 100.0
+            let everythingElseProb = Double(values[1]) / 100.0
+            let noHintProb = Double(values[2]) / 100.0
+            
+            difficultyProbs[difficulty] = [1: progressionProb, 0: everythingElseProb, -1: noHintProb]
+            print("Updated \(difficulty) probabilities: \(difficultyProbs[difficulty]!)")
+        }
+    }
+    
+    /// Returns a human‑readable string for the hint probabilities for a given difficulty.
+    static func hintProbabilitiesString(for difficulty: String) -> String {
+        guard let mapping = difficultyProbs[difficulty] else { return "N/A" }
+        // Keys: 1: progression, 0: everything else, -1: no hint.
+        let progression = mapping[1] ?? 0.0
+        let nonProgression = mapping[0] ?? 0.0
+        let noHint = mapping[-1] ?? 0.0
+        // Multiply by 100 to get percentage values.
+        let progressionPercent = Int(round(progression * 100))
+        let nonProgressionPercent = Int(round(nonProgression * 100))
+        let noHintPercent = Int(round(noHint * 100))
+        return "\(progressionPercent) Prog, \(nonProgressionPercent) Non-prog, \(noHintPercent) No Hint"
+    }
+    
     /// Helper to retrieve the connected player's slot number from the slot list.
     func getConnectedSlotNumber() -> String? {
         // Assume the client’s slotName is the connected player's name.
@@ -21,6 +50,33 @@ extension HintGameWebSocketClient {
             }
         }
         return nil
+    }
+    
+    /// Sends a packet to get existing hints for the given team and slot.
+    func getAdminSettings() {
+        let payload: [[String: Any]] = [[
+            "cmd": "Get",
+            "keys": ["APSudoku_Settings"],
+            "password": password,
+            "name": slotName,
+            "version": ["build": 0, "class": "Version", "major": 0, "minor": 5],
+            "tags": ["HintGame"],
+            "items_handling": 0,
+            "uuid": "",
+            "game": "",
+            "slot_data": true
+        ]]
+        send(payload: payload)
+    }
+    
+    func setNotifySettingsUpdate() {
+        
+        /// SetNotify to listen to changes to the settings key
+        let payload: [[String: Any]] = [[
+            "cmd": "SetNotify",
+            "keys": ["APSudoku_Settings"]
+        ]]
+        send(payload: payload)
     }
     
     /// Sends a local notification with the given message.
@@ -54,43 +110,67 @@ extension HintGameWebSocketClient {
         return grouped
     }
     
-    // Select a random reward based on difficulty.
+    // Select a random reward based on difficulty using the new probability format.
     func getRandomReward(difficulty: String, rewards: [[String: Any]]) throws -> [String: Any] {
-        let groupedRewards = groupRewards(rewards: rewards)
+        // Group rewards into two groups: progression and everythingElse.
+        var progressionRewards = [[String: Any]]()
+        var everythingElseRewards = [[String: Any]]()
+        
+        for reward in rewards {
+            if let flag = reward["flags"] as? Int {
+                if flag == 1 {
+                    progressionRewards.append(reward)
+                } else {
+                    everythingElseRewards.append(reward)
+                }
+            }
+        }
+        
+        // Retrieve the new probability mapping.
         guard let probMap = HintGameWebSocketClient.difficultyProbs[difficulty] else {
             throw NSError(domain: "HintGameError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid difficulty provided"])
         }
         
-        // Create arrays of flags and corresponding weights.
-        let flags = Array(probMap.keys)
-        let weights = flags.map { probMap[$0]! }
+        // Prepare arrays of keys and weights.
+        let keys = Array(probMap.keys)
+        let weights = keys.map { probMap[$0]! }
         let totalWeight = weights.reduce(0, +)
         let randomValue = Double.random(in: 0..<totalWeight)
         var cumulative = 0.0
-        var chosenFlag: Int? = nil
+        var chosenKey: Int? = nil
         
-        for (flag, weight) in zip(flags, weights) {
+        for (key, weight) in zip(keys, weights) {
             cumulative += weight
             if randomValue < cumulative {
-                chosenFlag = flag
+                chosenKey = key
                 break
             }
         }
         
-        // If the chosen flag is available, use it; otherwise fallback.
-        if let chosenFlag = chosenFlag,
-           let rewardsForFlag = groupedRewards[chosenFlag],
-           !rewardsForFlag.isEmpty {
-            return rewardsForFlag.randomElement()!
-        } else {
-            let availableFlags = flags.filter { (groupedRewards[$0]?.isEmpty == false) }
-            guard let fallbackFlag = availableFlags.randomElement(),
-                  let fallbackRewards = groupedRewards[fallbackFlag],
-                  !fallbackRewards.isEmpty else {
-                throw NSError(domain: "HintGameError", code: 0, userInfo: [NSLocalizedDescriptionKey: "No available rewards in the pool"])
-            }
-            return fallbackRewards.randomElement()!
+        guard let chosenKey = chosenKey else {
+            throw NSError(domain: "HintGameError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Failed to choose a category"])
         }
+        
+        // If the no-hint chance is triggered, throw an error (or handle it as needed).
+        if chosenKey == -1 {
+            throw NSError(domain: "HintGameError", code: 0, userInfo: [NSLocalizedDescriptionKey: "No hint triggered"])
+        } else if chosenKey == 1 {
+            // Prefer progression rewards.
+            if !progressionRewards.isEmpty {
+                return progressionRewards.randomElement()!
+            } else if !everythingElseRewards.isEmpty {
+                return everythingElseRewards.randomElement()!
+            }
+        } else if chosenKey == 0 {
+            // Prefer everything else rewards.
+            if !everythingElseRewards.isEmpty {
+                return everythingElseRewards.randomElement()!
+            } else if !progressionRewards.isEmpty {
+                return progressionRewards.randomElement()!
+            }
+        }
+        
+        throw NSError(domain: "HintGameError", code: 0, userInfo: [NSLocalizedDescriptionKey: "No available rewards in the pool"])
     }
     
     // Request a reward by selecting a reward location and then granting a hint.
@@ -100,14 +180,19 @@ extension HintGameWebSocketClient {
             print("No rewards available to grant")
             return
         }
-        do {
-            let reward = try getRandomReward(difficulty: difficulty, rewards: locationsProgression)
-            if let location = reward["location"] as? String {
-                print("Granting reward for \(difficulty) difficulty at location: \(location)")
-                grantHint(for: location)
+        if self.hintsEnabled == true {
+            do {
+                let reward = try getRandomReward(difficulty: difficulty, rewards: locationsProgression)
+                if let location = reward["location"] as? String {
+                    print("Granting reward for \(difficulty) difficulty at location: \(location)")
+                    grantHint(for: location)
+                }
+            } catch {
+                print("Error granting reward: \(error)")
             }
-        } catch {
-            print("Error granting reward: \(error)")
+        } else {
+            print("Hints are disabled for this server.")
+            
         }
     }
     
@@ -415,6 +500,8 @@ class HintGameWebSocketClient: NSObject {
     var hintedLocations: [String] = []
     var locationsProgression: [[String: Any]] = []
     
+    var hintsEnabled: Bool = true
+    
     let session = URLSession(configuration: .default)
     
     // New initializer that accepts IP and port.
@@ -535,6 +622,7 @@ class HintGameWebSocketClient: NSObject {
             print("Connected: \(msg)")
             onConnected?()
             
+            
             // Process location data.
             if let checkedArray = msg["checked_locations"] as? [Any],
                let missingArray = msg["missing_locations"] as? [Any] {
@@ -578,19 +666,55 @@ class HintGameWebSocketClient: NSObject {
                 print("Slot List after mapping team: \(self.slotList)")
             }
             
+            DispatchQueue.main.asyncAfter(deadline: .now()) {
+                self.getAdminSettings()
+                self.setNotifySettingsUpdate()
+            }
+                
             // Wait 1 second after connection, then refresh hint data.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                self.refreshHintData {
-                    // Once hint data is refreshed, extract game names from the slot list.
-                    let games = self.slotList.compactMap { $0["game"] as? String }
-                    print("Requesting datapacks for games: \(games)")
-                    self.getDataPackages(for: games)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                
+                // Check if hints are enabled
+                print("hintsEnabled: \(self.hintsEnabled)")
+                if self.hintsEnabled {
+                    print("Hints are enabled, refreshing hint data.")
+                    
+                    self.refreshHintData {
+                        // Once hint data is refreshed, extract game names from the slot list.
+                        let games = self.slotList.compactMap { $0["game"] as? String }
+                        print("Requesting datapacks for games: \(games)")
+                        self.getDataPackages(for: games)
+                    }
+                } else {
+                    print("Hints are disabled, closing connection if open.")
+                    if self.isOpen {
+                        ArchipelagoConnectionManager.shared.disconnect()
+                    }
                 }
             }
+        
             
         case "Retrieved":
             print("Retrieved: \(msg)")
             if let keys = msg["keys"] as? [String: Any] {
+                // Handle settings changes if they exist.
+                if let settings = keys["APSudoku_Settings"] as? [String: Any] {
+                    print("Received settings: \(settings)")
+                    
+                    // Update hintsEnabled
+                    if let areHintsEnabled = settings["enabled"] as? Bool {
+                        self.hintsEnabled = areHintsEnabled
+                        print("hintsEnabled set to: \(self.hintsEnabled)")
+                    }
+                    if self.hintsEnabled  == false {
+                        HintViewModel.shared.showHintsDisabledOnServer()
+                        ArchipelagoConnectionManager.shared.disconnect()
+                    }
+                    // Update the hint probabilities if weights are provided.
+                    if let weights = settings["weights"] as? [String: [Int]] {
+                        HintGameWebSocketClient.updateHintProbabilities(with: weights)
+                    }
+                }
                 for (key, value) in keys {
                     if key.hasPrefix("_read_hints_"),
                        let hints = value as? [[String: Any]] {
@@ -640,6 +764,25 @@ class HintGameWebSocketClient: NSObject {
             print("PrintJSON: \(msg)")
             if let type = msg["type"] as? String, type == "Hint" {
                 self.handleHintMessage(msg: msg)
+            }
+        case "SetReply":
+            print("SetReply: \(msg)")
+            if let key = msg["key"] as? String, key == "APSudoku_Settings",
+               let valueDict = msg["value"] as? [String: Any] {
+                // Update hintsEnabled: enabled is provided as an integer (1 for true, 0 for false)
+                if let areHintsEnabled = valueDict["enabled"] as? Bool {
+                    
+                    self.hintsEnabled = areHintsEnabled
+                    print("Hints enabled set to: \(self.hintsEnabled)")
+                    if self.hintsEnabled  == false {
+                        HintViewModel.shared.showHintsDisabledOnServer()
+                        ArchipelagoConnectionManager.shared.disconnect()
+                    }
+                }
+                // Update hint probabilities using the new weights.
+                if let weights = valueDict["weights"] as? [String: [Int]] {
+                    HintGameWebSocketClient.updateHintProbabilities(with: weights)
+                }
             }
         default:
             print("Received unhandled message:!!! \(msg)!!!")

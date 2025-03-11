@@ -4,6 +4,7 @@ import Combine
 enum HintAlert: Identifiable {
     case newHint(String)
     case noMoreHints
+    case hintsDisabledOnServer
 
     var id: String {
         switch self {
@@ -11,6 +12,8 @@ enum HintAlert: Identifiable {
             return "newHint-\(message)"
         case .noMoreHints:
             return "noMoreHints"
+        case .hintsDisabledOnServer:
+            return "hintsDisabledOnServer"
         }
     }
 }
@@ -31,6 +34,12 @@ final class HintViewModel: ObservableObject {
     func showNoMoreHints() {
         DispatchQueue.main.async {
             self.currentAlert = .noMoreHints
+        }
+    }
+    
+    func showHintsDisabledOnServer() {
+        DispatchQueue.main.async {
+            self.currentAlert = .hintsDisabledOnServer
         }
     }
     
