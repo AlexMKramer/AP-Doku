@@ -16,6 +16,8 @@ A full-featured Sudoku game built with SwiftUI, featuring Archipelago Multi-Worl
 ## Installing the IPA
 Possibly available soon on the App Store!
 
+### Now available on Test Flight: https://testflight.apple.com/join/mpFpszwQ
+
 
 But for now:
 
